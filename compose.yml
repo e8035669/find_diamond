@@ -1,0 +1,17 @@
+services:
+  proxy:
+    image: sekai-proxy
+    build: .
+    command: ["mitmdump", "-s", "/app/addon.py"]
+    volumes:
+      - ./data/mitmproxy:/root/.mitmproxy
+    ports:
+      - 8080:8080
+      - 51820:51820/udp
+
+  webapp:
+    image: sekai-proxy
+    build: .
+    command: ["python", "webapp.py"]
+    network_mode: service:proxy
+
