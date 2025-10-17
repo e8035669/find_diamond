@@ -8,6 +8,7 @@ services:
     ports:
       - 8080:8080
       - 51820:51820/udp
+      - 51820:51820
 
   webapp:
     image: sekai-proxy
