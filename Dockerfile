@@ -11,6 +11,7 @@ COPY --from=build /app/.pixi/envs/default /app/.pixi/envs/default
 COPY ./addon.py /app/addon.py
 COPY ./webapp.py /app/webapp.py
 COPY ./utils.py /app/utils.py
+COPY ./manager.py /app/manager.py
 EXPOSE 8000
 ENV PATH=/app/.pixi/envs/default/bin:$PATH
 ENV CONDA_PREFIX=/app/.pixi/envs/default

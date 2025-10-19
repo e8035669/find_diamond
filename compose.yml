@@ -2,11 +2,12 @@ services:
   proxy:
     image: sekai-proxy
     build: .
-    command: ["mitmdump", "-s", "/app/addon.py"]
+    command: ["mitmweb", "-s", "/app/addon.py", "--mode", "wireguard", "--mode", "regular", "--set", "listen_port=51820", "--set", "web_host=0.0.0.0", "--set", "web_password=123456"]
     volumes:
       - ./data/mitmproxy:/root/.mitmproxy
     ports:
       - 8080:8080
+      - 127.0.0.1:8081:8081
       - 51820:51820/udp
       - 51820:51820
 
