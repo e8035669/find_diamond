@@ -12,6 +12,7 @@ COPY ./addon.py /app/addon.py
 COPY ./webapp.py /app/webapp.py
 COPY ./utils.py /app/utils.py
 COPY ./manager.py /app/manager.py
+COPY ./supervisord.conf /app/supervisord.conf
 EXPOSE 8000
 ENV PATH=/app/.pixi/envs/default/bin:$PATH
 ENV CONDA_PREFIX=/app/.pixi/envs/default

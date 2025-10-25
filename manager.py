@@ -22,3 +22,14 @@ class QueueManager(BaseManager):
 
 QueueManager.register('get_queue',
                       callable=lambda: Storage.get_instance().queue)
+
+
+def main():
+    manager = QueueManager(address=('', 50000), authkey=b'abracadabra')
+    server = manager.get_server()
+    print('Starting manager server on port 50000')
+    server.serve_forever()
+
+
+if __name__ == '__main__':
+    main()
