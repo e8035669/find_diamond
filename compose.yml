@@ -1,6 +1,6 @@
 services:
   proxy:
-    image: sekai-proxy
+    image: ghcr.io/e8035669/sekai-proxy:main
     build: .
     command: ["supervisord", "-c", "supervisord.conf"]
     volumes:
