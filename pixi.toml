@@ -15,10 +15,10 @@ webui = "python webapp.py"
 
 [dependencies]
 python = "3.13.*"
-pyperclip = ">=1.9.0,<2"
+pyperclip = ">=1.11.0,<2"
 supervisor = ">=4.2.5,<5"
 
 [pypi-dependencies]
-sssekai = ">=0.7.44, <0.8"
-mitmproxy = ">12"
-nicegui = ">=2.22.1, <3"
+sssekai = ">=0.7.62, <0.8"
+mitmproxy = ">=12.2.1, <13"
+nicegui = ">=3.3.1, <4"
