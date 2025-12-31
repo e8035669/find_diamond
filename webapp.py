@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import json
 
-from utils import DiamondPlace, ResourcePlace, SekaiTool, NetworkPackage
+from utils import DiamondPlace, ResourcePlace, SekaiMaterial, SekaiTool, NetworkPackage
 from manager import QueueManager
 
 
@@ -161,6 +161,18 @@ async def background():
             pass
 
 
+async def background_material():
+    logger = logging.getLogger()
+    while True:
+        try:
+            sekai_material = SekaiMaterial.instance()
+            sekai_material.update()
+            await asyncio.sleep(86400)
+        except Exception as e:
+            logger.error('update material fail: %s %s', type(e), e)
+            await asyncio.sleep(30)
+
+
 @ui.refreshable
 def show_messages():
     storage = Storage.instance()
@@ -215,15 +227,16 @@ class MainPage():
 
             with ui.row().classes('items-center'):
                 ui.label('選擇素材')
+                sekai_material = SekaiMaterial.instance()
                 self.select_res = ui.select(
-                    SekaiTool.all_resource_names(),
-                    value='12',
+                    sekai_material.get_all_mysekai_material(),
+                    value=12,
                     on_change=lambda _: self.show_resources.refresh())
             self.show_resources()
 
-            ui.button('Test Function',
-                      on_click=lambda _: Storage.instance().append_example(
-                          self.current_id))
+            # ui.button('Test Function',
+            #           on_click=lambda _: Storage.instance().append_example(
+            #               self.current_id))
 
     def on_update_event(self, msg: str):
         user_id = msg
@@ -243,6 +256,7 @@ class MainPage():
             ui.label('No selected resource id')
             return
         found_resources = SekaiTool.extract_resources(harvest_map,
+                                                      'mysekai_material',
                                                       int(selected_res_id))
         self.show_resources0(found_resources)
 
@@ -340,6 +354,7 @@ def main():
 #     pass
 
 app.on_startup(lambda: background_tasks.create(background()))
+app.on_startup(lambda: background_tasks.create(background_material()))
 
 if __name__ in {"__main__", "__mp_main__"}:
     logging.basicConfig(level=logging.DEBUG,

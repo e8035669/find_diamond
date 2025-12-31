@@ -2,6 +2,8 @@ from typing import Any, Optional, NamedTuple
 import json
 from dataclasses import dataclass
 import re
+from requests import Session
+import itertools
 
 from sssekai.crypto.APIManager import decrypt, SEKAI_APIMANAGER_KEYSETS
 import msgpack
@@ -83,6 +85,7 @@ FIXTURE_NAME = {
     '1001': '闊葉樹',
     '1002': '針葉樹',
     '1003': '熱帶樹',
+    '1004': '夕桐',
     '2001': '岩石',
     '2002': '銅礦',
     '2003': '鐵礦',
@@ -127,6 +130,7 @@ class OtherItems:
 
 class ResourceIndex(NamedTuple):
     site_id: int
+    res_type: str
     res_id: int
     pos_x: int
     pos_z: int
@@ -144,6 +148,151 @@ class ResourcePlace:
     fixture_name: str
     fixture_all_items: list[OtherItems]
     raw_data: list[DiamondPlace]
+
+
+class SekaiMaterial:
+    INSTANCE = None
+
+    REPO_JP = 'sekai-master-db-diff'
+    REPO_TC = 'sekai-master-db-tc-diff'
+
+    URL = 'https://raw.githubusercontent.com/Sekai-World/{repo}/refs/heads/main/{file}'
+
+    def __init__(self) -> None:
+        self.mysekai_materials: dict[int, str] = {}
+        self.mysekai_materials_tc: dict[int, str] = {}
+        self.mysekai_items: dict[int, str] = {}
+        self.mysekai_items_tc: dict[int, str] = {}
+        self.materials: dict[int, str] = {}
+        self.materials_tc: dict[int, str] = {}
+        self.mysekai_fixtures: dict[int, str] = {}
+        self.mysekai_fixtures_tc: dict[int, str] = {}
+
+        self.mysekai_materials_combine: dict[int, str] = {}
+        self.mysekai_items_combine: dict[int, str] = {}
+        self.materials_combine: dict[int, str] = {}
+        self.mysekai_fixtures_combine: dict[int, str] = {}
+
+    @classmethod
+    def instance(cls):
+        if cls.INSTANCE is None:
+            cls.INSTANCE = SekaiMaterial()
+        return cls.INSTANCE
+
+    def update(self):
+        sess = Session()
+
+        file_repos = [
+            ('mysekaiMaterials.json', self.REPO_JP),
+            ('mysekaiMaterials.json', self.REPO_TC),
+            ('mysekaiItems.json', self.REPO_JP),
+            ('mysekaiItems.json', self.REPO_TC),
+            ('materials.json', self.REPO_JP),
+            ('materials.json', self.REPO_TC),
+            ('mysekaiFixtures.json', self.REPO_JP),
+            ('mysekaiFixtures.json', self.REPO_TC),
+        ]
+
+        mappings = [
+            self.mysekai_materials,
+            self.mysekai_materials_tc,
+            self.mysekai_items,
+            self.mysekai_items_tc,
+            self.materials,
+            self.materials_tc,
+            self.mysekai_fixtures,
+            self.mysekai_fixtures_tc,
+        ]
+
+        for (f, r), d in zip(file_repos, mappings):
+            url = self.URL.format(repo=r, file=f)
+            ret = sess.get(url)
+            if ret.ok:
+                data = ret.content
+                json_data = json.loads(data)
+                extracted = {int(o['id']): str(o['name']) for o in json_data}
+                d.clear()
+                d.update(extracted)
+
+        combines = [
+            (
+                self.mysekai_materials_combine,
+                self.mysekai_materials,
+                self.mysekai_materials_tc,
+            ),
+            (
+                self.mysekai_items_combine,
+                self.mysekai_items,
+                self.mysekai_items_tc,
+            ),
+            (self.materials_combine, self.materials, self.materials_tc),
+            (
+                self.mysekai_fixtures_combine,
+                self.mysekai_fixtures,
+                self.mysekai_fixtures_tc,
+            ),
+        ]
+
+        for combine, jp, tc in combines:
+            combine.clear()
+            for i in jp:
+                if i in tc:
+                    combine[i] = f'{jp[i]}({tc[i]})'
+                else:
+                    combine[i] = jp[i]
+
+    def get_resource(self, resource_type: str, rid: int):
+        match resource_type:
+            case 'mysekai_material':
+                return self.get_mysekai_material(rid)
+            case 'mysekai_item':
+                return self.get_mysekai_item(rid)
+            case 'material':
+                return self.get_material(rid)
+            case 'mysekai_fixture':
+                return self.get_mysekai_fixtures(rid)
+            case _:
+                raise RuntimeError(f'Invalid type {resource_type}')
+
+    def get_mysekai_material(self, rid: int):
+        if rid in self.mysekai_materials_combine:
+            ret = self.mysekai_materials_combine[rid]
+        else:
+            ret = f'MysekaiMaterial {rid}'
+        return ret
+
+    def get_all_mysekai_material(self):
+        return self.mysekai_materials_combine
+
+    def get_mysekai_item(self, rid: int):
+        if rid in self.mysekai_items_combine:
+            ret = self.mysekai_items_combine[rid]
+        else:
+            ret = f'MysekaiItem {rid}'
+        return ret
+
+    def get_all_mysekai_item(self):
+        return self.mysekai_items_combine
+
+    def get_material(self, rid: int):
+        if rid in self.materials_combine:
+            ret = self.materials_combine[rid]
+        else:
+            ret = f'Material {rid}'
+        return ret
+
+    def get_all_material(self):
+        return self.materials_combine
+
+    def get_mysekai_fixtures(self, rid: int):
+        if rid in self.mysekai_fixtures_combine:
+            ret = self.mysekai_fixtures_combine[rid]
+        else:
+            ret = f'MysekaiFixture {rid}'
+        return ret
+
+    def get_all_mysekai_fixture(self):
+        return self.mysekai_fixtures_combine
 
 
 class SekaiTool:
@@ -250,23 +399,32 @@ class SekaiTool:
         pos_x: int,
         pos_z: int,
     ):
+        sekai_material = SekaiMaterial.instance()
         found_drops = [
             d for d in drops
             if d['positionX'] == pos_x and d['positionZ'] == pos_z
         ]
-        items: dict[int, OtherItems] = {}
+        items: dict[tuple[str, int], OtherItems] = {}
         for drop in found_drops:
+            res_type: str = drop['resourceType']
             res_id: int = drop['resourceId']
+            index = (res_type, res_id)
             quantity: int = drop['quantity']
-            if res_id not in items:
-                res_name = cls.get_resource_name(res_id)
-                items[res_id] = OtherItems(res_name, quantity)
+            if index not in items:
+                res_name = sekai_material.get_resource(res_type, res_id)
+                items[index] = OtherItems(res_name, quantity)
             else:
-                items[res_id].quantity += quantity
+                items[index].quantity += quantity
         return list(items.values())
 
     @classmethod
-    def extract_resources(cls, harvest_maps: dict, resource_id: int):
+    def extract_resources(
+        cls,
+        harvest_maps: dict,
+        resource_type: str,
+        resource_id: int,
+    ):
+        sekai_material = SekaiMaterial.instance()
         ret: dict[ResourceIndex, ResourcePlace] = {}
         for harvest_map in harvest_maps:
             site_id: int = harvest_map['mysekaiSiteId']
@@ -276,19 +434,23 @@ class SekaiTool:
             fixtures: list[dict[str, Any]] = (
                 harvest_map['userMysekaiSiteHarvestFixtures'])
             find_drop = [
-                drop for drop in drops if drop['resourceId'] == resource_id
+                drop for drop in drops
+                if (drop['resourceId'] == resource_id
+                    and drop['resourceType'] == resource_type)
             ]
 
             for drop in find_drop:
+                res_type = drop['resourceType']
                 res_id = drop['resourceId']
-                res_name = cls.get_resource_name(res_id)
+                res_name = sekai_material.get_resource(res_type, res_id)
                 pos_x = drop['positionX']
                 pos_z = drop['positionZ']
                 quantity = drop['quantity']
                 limit = drop.get(
                     'mysekaiSiteHarvestSpawnLimitedRelationGroupId')
 
-                index = ResourceIndex(site_id, res_id, pos_x, pos_z, limit)
+                index = ResourceIndex(site_id, res_type, res_id, pos_x, pos_z,
+                                      limit)
 
                 if index not in ret:
                     found_fixture = cls.find_fixture(fixtures, pos_x, pos_z)
