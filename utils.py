@@ -1,40 +1,34 @@
-from typing import Optional
+from typing import Any, Optional, NamedTuple
 import json
 from dataclasses import dataclass
+import re
 
 from sssekai.crypto.APIManager import decrypt, SEKAI_APIMANAGER_KEYSETS
 import msgpack
 
-
-def decrypt_data(data: bytes):
-    plain = decrypt(data, SEKAI_APIMANAGER_KEYSETS['jp'])
-    msg = msgpack.unpackb(plain)
-    return msg
-
-
 RESOURCE_NAMES = {
-    '1': '想いの木材',
-    '2': 'おもたい木材',
-    '3': 'かるい木材',
-    '4': 'ベタベタの樹液',
+    '1': '想いの木材(心願的木材)',
+    '2': 'おもたい木材(堅硬的木材)',
+    '3': 'かるい木材(輕的木材)',
+    '4': 'ベタベタの樹液(黏黏的樹液)',
     '5': '夕桐',
-    '6': '想いの石ころ',
+    '6': '想いの石ころ(心願的石塊)',
     '7': '銅',
     '8': '鉄',
     '9': '粘土',
-    '10': 'きれいなガラス',
-    '11': 'きらきクォーツ',
-    '12': 'ダイヤモンド',
-    '13': 'ねじ',
+    '10': 'きれいなガラス(玻璃)',
+    '11': 'きらきクォーツ(石英)',
+    '12': 'ダイヤモンド(鑽石)',
+    '13': 'ねじ(螺絲)',
     '14': '釘',
-    '15': 'プラスチック',
-    '16': 'モーター',
+    '15': 'プラスチック(塑膠)',
+    '16': 'モーター(馬達)',
     '17': '電池',
-    '18': 'ライト',
+    '18': 'ライト(燈泡)',
     '19': '電子基板',
-    '20': '四葉のクローバー',
-    '21': 'さらさリネン',
-    '22': 'ふわふわコットン',
+    '20': '四葉のクローバー(四葉草)',
+    '21': 'さらさらリネン(亞麻)',
+    '22': 'ふわふわコットン(棉花)',
     '23': '花びら',
     '24': 'まっさらな音色',
     '32': 'あおぞらシーグラス',
@@ -85,13 +79,32 @@ PLACE_NAME = {
     "8": "忘れ去られた場所",
 }
 
-
-def get_resource_name(rid: int):
-    return RESOURCE_NAMES.get(str(rid), f'Resource {rid}')
-
-
-def get_place_name(pid: int):
-    return PLACE_NAME.get(str(pid), f'Place {pid}')
+FIXTURE_NAME = {
+    '1001': '闊葉樹',
+    '1002': '針葉樹',
+    '1003': '熱帶樹',
+    '2001': '岩石',
+    '2002': '銅礦',
+    '2003': '鐵礦',
+    '2004': '玻璃礦',
+    '2005': '石英礦',
+    '3001': '工具箱',
+    '4001': '植物',
+    '4003': '花1',
+    '4004': '花2',
+    '4005': '花3',
+    '4006': '花4',
+    '4007': '花5',
+    '4008': '花6',
+    '4012': '花7',
+    '4013': '花8',
+    '4014': '花9',
+    '4015': '花10',
+    '4016': '花11',
+    '4017': '花12',
+    '5003': '木桶',
+    '5004': '發光的草堆',
+}
 
 
 @dataclass
@@ -100,50 +113,209 @@ class DiamondPlace:
     drop: dict
 
 
-def find_diamond(decrypted_data: dict,
-                 resource_id: int = 12) -> Optional[list[DiamondPlace]]:
-    root = decrypted_data
-    if 'updatedResources' in root:
-        root = root['updatedResources']
+@dataclass
+class NetworkPackage:
+    url: str
+    data: bytes
 
-    if 'userMysekaiHarvestMaps' in root:
-        harvest_maps = root['userMysekaiHarvestMaps']
-        ret = []
+
+@dataclass
+class OtherItems:
+    resouce_name: str
+    quantity: int
+
+
+class ResourceIndex(NamedTuple):
+    site_id: int
+    res_id: int
+    pos_x: int
+    pos_z: int
+    spawn_limit: Optional[int]
+
+
+@dataclass
+class ResourcePlace:
+    resource_name: str
+    place_name: str
+    position_x: int
+    position_z: int
+    quantity: int
+    spawn_limit: Optional[int]
+    fixture_name: str
+    fixture_all_items: list[OtherItems]
+    raw_data: list[DiamondPlace]
+
+
+class SekaiTool:
+
+    @staticmethod
+    def all_resource_names():
+        return RESOURCE_NAMES
+
+    @staticmethod
+    def get_resource_name(rid: int):
+        return RESOURCE_NAMES.get(str(rid), f'Resource {rid}')
+
+    @staticmethod
+    def get_place_name(pid: int):
+        return PLACE_NAME.get(str(pid), f'Place {pid}')
+
+    @staticmethod
+    def get_fixture_name(fix_id: int):
+        return FIXTURE_NAME.get(str(fix_id), f'Fixture {fix_id}')
+
+    @staticmethod
+    def decrypt_data(data: bytes):
+        plain = decrypt(data, SEKAI_APIMANAGER_KEYSETS['jp'])
+        msg = msgpack.unpackb(plain)
+        return msg
+
+    @staticmethod
+    def find_diamond(decrypted_data: dict,
+                     resource_id: int = 12) -> Optional[list[DiamondPlace]]:
+        root = decrypted_data
+        if 'updatedResources' in root:
+            root = root['updatedResources']
+
+        if 'userMysekaiHarvestMaps' in root:
+            harvest_maps = root['userMysekaiHarvestMaps']
+            ret = []
+            for harvest_map in harvest_maps:
+                site_id = harvest_map['mysekaiSiteId']
+                resource_drops = harvest_map[
+                    'userMysekaiSiteHarvestResourceDrops']
+                find_drop = [
+                    drop for drop in resource_drops
+                    if drop['resourceId'] == resource_id
+                ]
+                for drop in find_drop:
+                    ret.append(DiamondPlace(site_id, drop))
+            return ret
+        return None
+
+    @staticmethod
+    def get_remain_harvest_count(decrypted_data: dict):
+        root = decrypted_data
+        if 'updatedResources' in root:
+            root = root['updatedResources']
+
+        if 'userMysekaiHarvestMaps' in root:
+            harvest_maps = root['userMysekaiHarvestMaps']
+            ret = []
+            for harvest_map in harvest_maps:
+                site_id = harvest_map['mysekaiSiteId']
+                resource_drops = harvest_map[
+                    'userMysekaiSiteHarvestResourceDrops']
+                info = {'site_id': site_id, 'drop_count': len(resource_drops)}
+                ret.append(info)
+            return ret
+        return None
+
+    @staticmethod
+    def extract_user_id(url: str) -> Optional[str]:
+        PATTERN = r'https://.*\.colorfulpalette\.org/api/user/(\d+)/mysekai.*'
+        match = re.match(PATTERN, url)
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def extract_harvest_map(decrypted_data: dict):
+        root = decrypted_data
+        if 'updatedResources' in root:
+            root = root['updatedResources']
+
+        if 'userMysekaiHarvestMaps' in root:
+            harvest_maps = root['userMysekaiHarvestMaps']
+            return harvest_maps
+        return None
+
+    @classmethod
+    def find_fixture(
+        cls,
+        fixtures: list[dict[str, Any]],
+        pos_x: int,
+        pos_z: int,
+    ):
+        found_fixture = [
+            f for f in fixtures
+            if f['positionX'] == pos_x and f['positionZ'] == pos_z
+        ]
+        return found_fixture
+
+    @classmethod
+    def summary_other_item(
+        cls,
+        drops: list[dict[str, Any]],
+        pos_x: int,
+        pos_z: int,
+    ):
+        found_drops = [
+            d for d in drops
+            if d['positionX'] == pos_x and d['positionZ'] == pos_z
+        ]
+        items: dict[int, OtherItems] = {}
+        for drop in found_drops:
+            res_id: int = drop['resourceId']
+            quantity: int = drop['quantity']
+            if res_id not in items:
+                res_name = cls.get_resource_name(res_id)
+                items[res_id] = OtherItems(res_name, quantity)
+            else:
+                items[res_id].quantity += quantity
+        return list(items.values())
+
+    @classmethod
+    def extract_resources(cls, harvest_maps: dict, resource_id: int):
+        ret: dict[ResourceIndex, ResourcePlace] = {}
         for harvest_map in harvest_maps:
-            site_id = harvest_map['mysekaiSiteId']
-            resource_drops = harvest_map['userMysekaiSiteHarvestResourceDrops']
+            site_id: int = harvest_map['mysekaiSiteId']
+            place_name = cls.get_place_name(site_id)
+            drops: list[dict[str, Any]] = (
+                harvest_map['userMysekaiSiteHarvestResourceDrops'])
+            fixtures: list[dict[str, Any]] = (
+                harvest_map['userMysekaiSiteHarvestFixtures'])
             find_drop = [
-                drop for drop in resource_drops
-                if drop['resourceId'] == resource_id
+                drop for drop in drops if drop['resourceId'] == resource_id
             ]
+
             for drop in find_drop:
-                ret.append(DiamondPlace(site_id, drop))
-        return ret
-    return None
+                res_id = drop['resourceId']
+                res_name = cls.get_resource_name(res_id)
+                pos_x = drop['positionX']
+                pos_z = drop['positionZ']
+                quantity = drop['quantity']
+                limit = drop.get(
+                    'mysekaiSiteHarvestSpawnLimitedRelationGroupId')
 
+                index = ResourceIndex(site_id, res_id, pos_x, pos_z, limit)
 
-def get_remain_harvest_count(decrypted_data: dict):
-    root = decrypted_data
-    if 'updatedResources' in root:
-        root = root['updatedResources']
+                if index not in ret:
+                    found_fixture = cls.find_fixture(fixtures, pos_x, pos_z)
+                    fixture_name = 'Not found'
+                    if len(found_fixture) > 0:
+                        fixture = found_fixture[0]
+                        fixture_id = fixture['mysekaiSiteHarvestFixtureId']
+                        fixture_name = cls.get_fixture_name(fixture_id)
+                    other_items = cls.summary_other_item(drops, pos_x, pos_z)
+                    raw_data = [DiamondPlace(site_id, drop)]
 
-    if 'userMysekaiHarvestMaps' in root:
-        harvest_maps = root['userMysekaiHarvestMaps']
-        ret = []
-        for harvest_map in harvest_maps:
-            site_id = harvest_map['mysekaiSiteId']
-            resource_drops = harvest_map['userMysekaiSiteHarvestResourceDrops']
-            info = {'site_id': site_id, 'drop_count': len(resource_drops)}
-            ret.append(info)
-        return ret
-    return None
+                    res = ResourcePlace(res_name, place_name, pos_x, pos_z,
+                                        quantity, limit, fixture_name,
+                                        other_items, raw_data)
+                    ret[index] = res
+                else:
+                    res = ret[index]
+                    res.quantity += quantity
+                    res.raw_data.append(DiamondPlace(site_id, drop))
+        return list(ret.values())
 
 
 def test():
     with open('temp6.bin', 'rb') as f:
         data = f.read()
-    decrypted_data = decrypt_data(data)
-    ret = find_diamond(decrypted_data, 11)
+    decrypted_data = SekaiTool.decrypt_data(data)
+    ret = SekaiTool.find_diamond(decrypted_data, 11)
     if ret:
         print('Find diamond')
         for d in ret:

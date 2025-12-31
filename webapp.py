@@ -1,12 +1,14 @@
 import asyncio
-from dataclasses import dataclass
-from nicegui import ui, background_tasks, app
-from multiprocessing.managers import BaseManager
+from dataclasses import dataclass, field
+from nicegui import ui, background_tasks, app, Event
 from queue import Queue, Empty
 from collections import deque
 import logging
+from datetime import datetime
+import time
+import json
 
-from utils import DiamondPlace, decrypt_data, find_diamond, get_remain_harvest_count, get_place_name, get_resource_name
+from utils import DiamondPlace, ResourcePlace, SekaiTool, NetworkPackage
 from manager import QueueManager
 
 
@@ -30,9 +32,14 @@ class DequeLogger(logging.Handler):
             self.handleError(record)
 
 
+@dataclass
+class LastDiamondStatus:
+    last_update: float = 0
+    diamonds: list[DiamondPlace] = field(default_factory=list)
+
+
 class Storage:
     INSTANCE = None
-
 
     def __init__(self) -> None:
         self.messages = deque(maxlen=100)
@@ -47,9 +54,12 @@ class Storage:
                 'seq': 99,
                 'mysekaiSiteHarvestResourceDropStatus': 'before_drop',
                 'quantity': 1,
+                'mysekaiSiteHarvestSpawnLimitedRelationGroupId': 2503,
             })
 
-        self.last_found_diamonds: list[DiamondPlace] = []
+        self.event = Event[str]()
+        self.last_found_diamonds: dict[str, LastDiamondStatus] = {}
+        self.last_harvest_map: dict[str, dict] = {}
         pass
 
     @classmethod
@@ -65,21 +75,49 @@ class Storage:
         self.messages.clear()
         show_messages.refresh()
 
-    def update_diamonds(self, diamonds: list[DiamondPlace]):
-        self.last_found_diamonds.clear()
-        self.last_found_diamonds.extend(diamonds)
-        show_diamonds.refresh()
+    def update_diamonds(self, user_id: str, diamonds: list[DiamondPlace]):
+        if user_id not in self.last_found_diamonds:
+            status = LastDiamondStatus()
+            self.last_found_diamonds[user_id] = status
+        else:
+            status = self.last_found_diamonds[user_id]
+        status.last_update = time.time()
+        status.diamonds = diamonds
+
+    def update_harvest_map(self, user_id: str, harvest_maps: dict):
+        self.last_harvest_map[user_id] = harvest_maps
+
+    def emit_event(self, user_id):
+        self.event.emit(user_id)
+
+    def append_example(self, user_id: str):
+        diamonds = [self.example_diamond] * 2
+        self.update_diamonds(user_id, diamonds)
+        with open('test1.json') as f:
+            data = json.load(f)
+        harvest_map = SekaiTool.extract_harvest_map(data)
+        if harvest_map is not None:
+            self.update_harvest_map(user_id, harvest_map)
+        self.emit_event(user_id)
 
 
-def try_find_diamond(data: bytes):
+def try_find_diamond(pack: NetworkPackage):
     logger = logging.getLogger()
     try:
         storage = Storage.instance()
-        message = storage.messages
-        decrypted_data = decrypt_data(data)
-        harvest_count = get_remain_harvest_count(decrypted_data)
+        user_id = SekaiTool.extract_user_id(pack.url)
+        if not user_id:
+            logger.info('Cannot extract user_id')
+            return
+        decrypted_data = SekaiTool.decrypt_data(pack.data)
+        harvest_count = SekaiTool.get_remain_harvest_count(decrypted_data)
         logger.info('harvest_count: %s', harvest_count)
-        ret = find_diamond(decrypted_data, 12)
+
+        harvest_map = SekaiTool.extract_harvest_map(decrypted_data)
+        if harvest_map is not None:
+            storage.update_harvest_map(user_id, harvest_map)
+
+        ret = SekaiTool.find_diamond(decrypted_data, 12)
         # ret = find_diamond(decrypted_data, 1)
         if ret is None:
             return
@@ -89,7 +127,8 @@ def try_find_diamond(data: bytes):
                 logger.info('%s', d)
         else:
             logger.info('Diamond not found')
-        storage.update_diamonds(ret)
+        storage.update_diamonds(user_id, ret)
+        storage.emit_event(user_id)
     except Exception as ex:
         logger.error('Exception: %s %s', type(ex), ex)
 
@@ -103,9 +142,10 @@ async def background_handle():
     while True:
         await asyncio.sleep(1)
         try:
-            data = queue.get_nowait()
-            logger.info('get data %s bytes', len(data))
-            try_find_diamond(data)
+            pack: NetworkPackage = queue.get_nowait()
+            logger.info('get pack for: %s', pack.url)
+            logger.info('get data %s bytes', len(pack.data))
+            try_find_diamond(pack)
         except Empty:
             pass
 
@@ -122,29 +162,6 @@ async def background():
 
 
 @ui.refreshable
-def show_diamonds():
-    storage = Storage.instance()
-    diamonds = storage.last_found_diamonds
-    with ui.list().props('bordered separator'):
-        if not diamonds:
-            with ui.item():
-                with ui.item_section():
-                    ui.item_label('No Diamond').props('header')
-
-        for diamond in diamonds:
-            drop = diamond.drop
-            item_id = drop.get('resourceId', -1)
-            item_name = get_resource_name(item_id)
-            place_name = get_place_name(diamond.site_id)
-            with ui.item():
-                with ui.item_section():
-                    ui.item_label(item_name)
-                    ui.item_label(f'Place: {place_name}').props('caption')
-                    ui.item_label(f'positionX: {drop.get('positionX')}').props('caption')
-                    ui.item_label(f'positionZ: {drop.get('positionZ')}').props('caption')
-
-
-@ui.refreshable
 def show_messages():
     storage = Storage.instance()
     log = ui.log()
@@ -152,13 +169,175 @@ def show_messages():
         log.push(i)
 
 
+class InitialPage():
+
+    def __init__(self):
+
+        with ui.header().classes('items-center'):
+            with ui.row().classes('w-full max-w-3xl mx-auto'):
+                ui.label('Sekai Treasure').props('color=white').classes(
+                    'text-xl')
+
+        with ui.column().classes('w-full max-w-3xl mx-auto'):
+            ui.label('初始設定').classes('text-h5')
+            ui.label('請先輸入帳號id')
+            validation = {
+                'Cannot be empty': lambda v: len(v) > 0,
+                'Invalid input': lambda v: str(v).isalnum(),
+            }
+            self.user_id = ui.input('User ID', validation=validation)
+            self.submit = ui.button('Submit', on_click=self.on_submit_user_id)
+
+    def on_submit_user_id(self):
+        if self.user_id.validate():
+            value = str(self.user_id.value).strip()
+            app.storage.user['user_id'] = value
+            ui.navigate.reload()
+
+
+class MainPage():
+
+    def __init__(self):
+        with ui.header().classes('items-center'):
+            with ui.row().classes('w-full max-w-3xl mx-auto'):
+                ui.label('Sekai Treasure').props('color=white').classes(
+                    'text-xl')
+                ui.space()
+                (ui.button(icon='logout', on_click=self.logout)  # 
+                 .props('flat round dense color=white'))
+
+        with ui.column().classes('w-full max-w-3xl mx-auto'):
+            self.current_id = app.storage.user['user_id']
+            ui.label(f'Current ID: {self.current_id}')
+            self.event = Storage.instance().event
+            self.event.subscribe(self.on_update_event)
+            self.show_diamonds()
+
+            with ui.row().classes('items-center'):
+                ui.label('選擇素材')
+                self.select_res = ui.select(
+                    SekaiTool.all_resource_names(),
+                    value='12',
+                    on_change=lambda _: self.show_resources.refresh())
+            self.show_resources()
+
+            ui.button('Test Function',
+                      on_click=lambda _: Storage.instance().append_example(
+                          self.current_id))
+
+    def on_update_event(self, msg: str):
+        user_id = msg
+        if user_id == self.current_id:
+            self.show_diamonds.refresh()
+            self.show_resources.refresh()
+
+    @ui.refreshable_method
+    def show_resources(self):
+        storage = Storage.instance()
+        harvest_map = storage.last_harvest_map.get(self.current_id)
+        if not harvest_map:
+            ui.label('Waiting for network packets...')
+            return
+        selected_res_id = self.select_res.value
+        if selected_res_id is None:
+            ui.label('No selected resource id')
+            return
+        found_resources = SekaiTool.extract_resources(harvest_map,
+                                                      int(selected_res_id))
+        self.show_resources0(found_resources)
+
+    def show_resources0(self, found_resources: list[ResourcePlace]):
+        if not found_resources:
+            ui.label('No Resources Found').classes('text-gray-500')
+            return
+
+        with ui.grid().classes('w-full grid grid-cols-1 md:grid-cols-2 gap-4'):
+            for res in found_resources:
+                with ui.card().classes('w-full'):
+                    with ui.card_section():
+                        ui.label(
+                            res.resource_name).classes('text-lg font-bold')
+
+                    with ui.card_section():
+                        ui.label(f'📍 {res.place_name}')
+                        ui.label(f'坐標: ({res.position_x}, {res.position_z})')
+                        ui.label(f'數量: {res.quantity}')
+                        if res.spawn_limit is not None:
+                            ui.label(f'期間限定: {res.spawn_limit}').classes(
+                                'text-sm text-blue-600')
+                        if res.fixture_name:
+                            ui.label(f'Fixture: {res.fixture_name}').classes(
+                                'text-sm text-purple-600')
+                        if res.fixture_all_items:
+                            ui.label('其他物品:').classes('text-sm text-gray-500')
+                            with ui.row().classes('flex-wrap gap-2'):
+                                for it in res.fixture_all_items:
+                                    item_name = it.resouce_name
+                                    item_qty = it.quantity
+                                    ui.label(
+                                        f'{item_name} x {item_qty}'
+                                    ).classes(
+                                        'text-sm bg-gray-100 px-2 py-1 rounded'
+                                    )
+
+    @ui.refreshable_method
+    def show_diamonds(self):
+        storage = Storage.instance()
+        diamond_status = storage.last_found_diamonds.get(self.current_id)
+        if not diamond_status:
+            ui.label('Waiting for network packets...')
+            return
+        last_update = datetime.fromtimestamp(diamond_status.last_update)
+        last_update = last_update.isoformat(sep=' ', timespec='seconds')
+        ui.label(f'Last update: {last_update}')
+
+        diamonds = diamond_status.diamonds
+        with ui.list().props('bordered separator'):
+            if not diamonds:
+                with ui.item():
+                    with ui.item_section():
+                        ui.item_label('No Diamond').props('header')
+                return
+
+            for diamond in diamonds:
+                drop = diamond.drop
+                item_id = drop.get('resourceId', -1)
+                position_x = drop.get('positionX')
+                position_z = drop.get('positionZ')
+                item_name = SekaiTool.get_resource_name(item_id)
+                place_name = SekaiTool.get_place_name(diamond.site_id)
+                spawn_limit = drop.get(
+                    'mysekaiSiteHarvestSpawnLimitedRelationGroupId')
+                with ui.item():
+                    with ui.item_section():
+                        ui.item_label(item_name)
+                        ui.item_label(f'Place: {place_name}').props('caption')
+                        ui.item_label(f'positionX: {position_x}').props(
+                            'caption')
+                        ui.item_label(f'positionZ: {position_z}').props(
+                            'caption')
+                        ui.item_label(f'Spawn Limit: {spawn_limit}').props(
+                            'caption')
+
+    def logout(self):
+        app.storage.user.pop('user_id')
+        ui.navigate.reload()
+
+
 @ui.page('/')
 def main():
-    show_diamonds()
-    ui.button('clear', on_click=lambda: Storage.instance().clear_messages())
-    show_messages()
-    pass
+    if 'user_id' not in app.storage.user:
+        InitialPage()
+    else:
+        MainPage()
 
+
+# @ui.page('/')
+# def main():
+#     show_diamonds()
+#     ui.button('clear', on_click=lambda: Storage.instance().clear_messages())
+#     show_messages()
+#     pass
 
 app.on_startup(lambda: background_tasks.create(background()))
 
@@ -172,4 +351,7 @@ if __name__ in {"__main__", "__mp_main__"}:
     handler.setFormatter(formatter)
     root = logging.getLogger()
     root.addHandler(handler)
-    ui.run(reload=False)
+    ui.run(
+        reload=False,
+        storage_secret='private key to secure the browser session cookie',
+    )

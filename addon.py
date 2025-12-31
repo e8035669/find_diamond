@@ -4,8 +4,12 @@ from multiprocessing.managers import BaseManager
 from queue import Queue, Empty
 import threading
 import time
-from mitmproxy import http
-from utils import decrypt_data, find_diamond, get_remain_harvest_count
+from pathlib import Path
+from typing import Any
+from datetime import datetime
+from mitmproxy import http, ctx
+from mitmproxy.addonmanager import Loader
+from utils import SekaiTool, NetworkPackage
 from manager import QueueManager
 
 PATTERNS = [
@@ -64,7 +68,7 @@ class SekaiDataSender:
                 del manager
                 del q
 
-    def send_data(self, data: bytes):
+    def send_data(self, data: Any):
         self.queue.put(data)
 
 
@@ -73,12 +77,20 @@ class ShowSekai:
     def __init__(self):
         self.data_sender = SekaiDataSender()
 
+    def load(self, loader: Loader):
+        loader.add_option(
+            name='save_sekai',
+            typespec=bool,
+            default=False,
+            help='save packets for testing',
+        )
+
     def try_find_diamond(self, data: bytes):
         try:
-            decrypted_data = decrypt_data(data)
-            harvest_count = get_remain_harvest_count(decrypted_data)
+            decrypted_data = SekaiTool.decrypt_data(data)
+            harvest_count = SekaiTool.get_remain_harvest_count(decrypted_data)
             print('harvest_count:', harvest_count)
-            ret = find_diamond(decrypted_data, 12)
+            ret = SekaiTool.find_diamond(decrypted_data, 12)
             if ret is None:
                 return
             if ret:
@@ -90,16 +102,35 @@ class ShowSekai:
         except Exception as ex:
             print('Exception:', ex)
 
+    @staticmethod
+    def get_time_filename():
+        curr = datetime.now()
+        return curr.strftime('packet_%Y%m%d_%H%M%S.bin')
+
+    def handle_matched_flow(self, flow: http.HTTPFlow):
+        data = flow.response.content
+        if data:
+            pack = NetworkPackage(flow.request.pretty_url, data)
+            self.data_sender.send_data(pack)
+            self.try_find_diamond(data)
+
+            if ctx.options.save_sekai:
+                try:
+                    sekai_data_dir = Path('sekai_data')
+                    sekai_data_dir.mkdir(exist_ok=True)
+                    filename = sekai_data_dir / self.get_time_filename()
+                    filename.write_bytes(data)
+                    print('Save to', filename)
+                except Exception as ex:
+                    print('Error on save packet:', type(ex), ex)
+
     def response(self, flow: http.HTTPFlow):
         if 'colorfulpalette.org' in flow.request.pretty_url:
             print(flow.request.pretty_url)
 
             if (any(re.match(p, flow.request.pretty_url) for p in PATTERNS)
                     and flow.response):
-                data = flow.response.content
-                if data:
-                    self.data_sender.send_data(data)
-                    self.try_find_diamond(data)
+                self.handle_matched_flow(flow)
 
 
 addons = [ShowSekai()]

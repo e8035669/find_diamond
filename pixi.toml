@@ -21,4 +21,4 @@ supervisor = ">=4.2.5,<5"
 [pypi-dependencies]
 sssekai = ">=0.7.62, <0.8"
 mitmproxy = ">=12.2.1, <13"
-nicegui = ">=3.3.1, <4"
+nicegui = ">=3.4.1, <4"
