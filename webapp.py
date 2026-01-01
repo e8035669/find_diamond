@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import json
 
-from utils import DiamondPlace, ResourcePlace, SekaiMaterial, SekaiTool, NetworkPackage
+from utils import DiamondPlace, ResourcePlace, SekaiResources, SekaiTool, NetworkPackage
 from manager import QueueManager
 
 
@@ -42,6 +42,7 @@ class LastDiamondStatus:
 class LastHarvestMapStatus:
     last_update: float = 0
     harvest_map: dict = field(default_factory=dict)
+    current_ids: dict[str, set[int]] = field(default_factory=dict)
 
 
 class Storage:
@@ -98,6 +99,9 @@ class Storage:
             status = self.last_harvest_map[user_id]
         status.last_update = time.time()
         status.harvest_map = harvest_maps
+
+        exist_ids = SekaiTool.current_exist_ids(harvest_maps)
+        status.current_ids = exist_ids
 
     def emit_event(self, user_id):
         self.event.emit(user_id)
@@ -177,7 +181,7 @@ async def background_material():
     logger = logging.getLogger()
     while True:
         try:
-            sekai_material = SekaiMaterial.instance()
+            sekai_material = SekaiResources.instance()
             sekai_material.update()
             await asyncio.sleep(86400)
         except Exception as e:
@@ -237,18 +241,65 @@ class MainPage():
             self.event.subscribe(self.on_update_event)
             # self.show_diamonds()
 
+            self.radio_res_type = ui.radio(
+                {
+                    'mysekai_material': 'MySekai Material',
+                    'mysekai_item': 'MySekai Item',
+                    'material': 'Material',
+                    'mysekai_fixture': 'MySekai Fixture',
+                },
+                value='mysekai_material',
+                on_change=self.on_res_type_change).props('inline')
+
+            self.checkbox_filter_current = ui.checkbox(
+                'Filter Current', on_change=self.on_res_type_change)
+
             with ui.row().classes('items-center'):
                 ui.label('選擇素材')
-                sekai_material = SekaiMaterial.instance()
+                resources = SekaiResources.instance()
                 self.select_res = ui.select(
-                    sekai_material.get_all_mysekai_material(),
+                    resources.get_all_mysekai_material(),
                     value=12,
-                    on_change=lambda _: self.show_resources.refresh())
+                    on_change=self.show_resources.refresh,
+                )
+
             self.show_resources()
 
             # ui.button('Test Function',
             #           on_click=lambda _: Storage.instance().append_example(
             #               self.current_id))
+
+    def on_res_type_change(self):
+        res = SekaiResources.instance()
+        obj = self.radio_res_type
+
+        match obj.value:
+            case 'mysekai_material':
+                options = res.get_all_mysekai_material()
+            case 'mysekai_item':
+                options = res.get_all_mysekai_item()
+            case 'material':
+                options = res.get_all_material()
+            case 'mysekai_fixture':
+                options = res.get_all_mysekai_fixture()
+            case _:
+                options = {}
+
+        need_filter = self.checkbox_filter_current.value
+        if need_filter:
+            storage = Storage.instance()
+            if self.current_id in storage.last_harvest_map:
+                status = storage.last_harvest_map[self.current_id]
+                current_ids = status.current_ids.get(str(obj.value))
+                if current_ids:
+                    new_options = {
+                        k: res.get_resource(str(obj.value), k)
+                        for k in current_ids
+                    }
+                    options = new_options
+
+        self.select_res.set_options(options)
+        self.show_resources.refresh()
 
     def on_update_event(self, msg: str):
         user_id = msg
@@ -272,8 +323,11 @@ class MainPage():
         if selected_res_id is None:
             ui.label('No selected resource id')
             return
+        selected_res_type = self.radio_res_type.value
+        if selected_res_type is None:
+            ui.label('No selected resource type')
         found_resources = SekaiTool.extract_resources(harvest_map,
-                                                      'mysekai_material',
+                                                      str(selected_res_type),
                                                       int(selected_res_id))
         self.show_resources0(found_resources)
 

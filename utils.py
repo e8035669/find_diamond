@@ -151,7 +151,7 @@ class ResourcePlace:
     raw_data: list[DiamondPlace]
 
 
-class SekaiMaterial:
+class SekaiResources:
     INSTANCE = None
 
     REPO_JP = 'sekai-master-db-diff'
@@ -177,7 +177,7 @@ class SekaiMaterial:
     @classmethod
     def instance(cls):
         if cls.INSTANCE is None:
-            cls.INSTANCE = SekaiMaterial()
+            cls.INSTANCE = SekaiResources()
         return cls.INSTANCE
 
     def update(self):
@@ -400,7 +400,7 @@ class SekaiTool:
         pos_x: int,
         pos_z: int,
     ):
-        sekai_material = SekaiMaterial.instance()
+        sekai_material = SekaiResources.instance()
         found_drops = [
             d for d in drops
             if d['positionX'] == pos_x and d['positionZ'] == pos_z
@@ -425,7 +425,7 @@ class SekaiTool:
         resource_type: str,
         resource_id: int,
     ):
-        sekai_material = SekaiMaterial.instance()
+        sekai_material = SekaiResources.instance()
         ret: dict[ResourceIndex, ResourcePlace] = {}
         for harvest_map in harvest_maps:
             site_id: int = harvest_map['mysekaiSiteId']
@@ -472,6 +472,26 @@ class SekaiTool:
                     res.quantity += quantity
                     res.raw_data.append(DiamondPlace(site_id, drop))
         return list(ret.values())
+
+    @classmethod
+    def current_exist_ids(cls, harvest_maps: dict):
+        ret = {
+            'mysekai_material': set(),
+            'mysekai_item': set(),
+            'material': set(),
+            'mysekai_fixture': set(),
+        }
+
+        for harvest_map in harvest_maps:
+            drops: list[dict[str, Any]] = (
+                harvest_map['userMysekaiSiteHarvestResourceDrops'])
+            for drop in drops:
+                res_type = drop['resourceType']
+                if res_type not in ret:
+                    continue
+                res_id = drop['resourceId']
+                ret[res_type].add(int(res_id))
+        return ret
 
 
 def test():
