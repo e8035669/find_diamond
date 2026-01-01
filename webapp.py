@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
-from nicegui import ui, background_tasks, app, Event
+from nicegui import ui, background_tasks, app, Event, run
 from queue import Queue, Empty
 from collections import deque
 import logging
@@ -38,6 +38,12 @@ class LastDiamondStatus:
     diamonds: list[DiamondPlace] = field(default_factory=list)
 
 
+@dataclass
+class LastHarvestMapStatus:
+    last_update: float = 0
+    harvest_map: dict = field(default_factory=dict)
+
+
 class Storage:
     INSTANCE = None
 
@@ -59,7 +65,7 @@ class Storage:
 
         self.event = Event[str]()
         self.last_found_diamonds: dict[str, LastDiamondStatus] = {}
-        self.last_harvest_map: dict[str, dict] = {}
+        self.last_harvest_map: dict[str, LastHarvestMapStatus] = {}
         pass
 
     @classmethod
@@ -85,7 +91,13 @@ class Storage:
         status.diamonds = diamonds
 
     def update_harvest_map(self, user_id: str, harvest_maps: dict):
-        self.last_harvest_map[user_id] = harvest_maps
+        if user_id not in self.last_harvest_map:
+            status = LastHarvestMapStatus()
+            self.last_harvest_map[user_id] = status
+        else:
+            status = self.last_harvest_map[user_id]
+        status.last_update = time.time()
+        status.harvest_map = harvest_maps
 
     def emit_event(self, user_id):
         self.event.emit(user_id)
@@ -223,7 +235,7 @@ class MainPage():
             ui.label(f'Current ID: {self.current_id}')
             self.event = Storage.instance().event
             self.event.subscribe(self.on_update_event)
-            self.show_diamonds()
+            # self.show_diamonds()
 
             with ui.row().classes('items-center'):
                 ui.label('選擇素材')
@@ -241,16 +253,21 @@ class MainPage():
     def on_update_event(self, msg: str):
         user_id = msg
         if user_id == self.current_id:
-            self.show_diamonds.refresh()
+            # self.show_diamonds.refresh()
             self.show_resources.refresh()
 
     @ui.refreshable_method
     def show_resources(self):
         storage = Storage.instance()
-        harvest_map = storage.last_harvest_map.get(self.current_id)
-        if not harvest_map:
+        status = storage.last_harvest_map.get(self.current_id)
+        if not status:
             ui.label('Waiting for network packets...')
             return
+        harvest_map = status.harvest_map
+        last_update = datetime.fromtimestamp(status.last_update)
+        last_update = last_update.isoformat(sep=' ', timespec='seconds')
+        ui.label(f'Last update: {last_update}')
+
         selected_res_id = self.select_res.value
         if selected_res_id is None:
             ui.label('No selected resource id')
@@ -353,8 +370,8 @@ def main():
 #     show_messages()
 #     pass
 
-app.on_startup(lambda: background_tasks.create(background()))
 app.on_startup(lambda: background_tasks.create(background_material()))
+app.on_startup(lambda: background_tasks.create(background()))
 
 if __name__ in {"__main__", "__mp_main__"}:
     logging.basicConfig(level=logging.DEBUG,
