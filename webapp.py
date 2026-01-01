@@ -241,27 +241,37 @@ class MainPage():
             self.event.subscribe(self.on_update_event)
             # self.show_diamonds()
 
-            self.radio_res_type = ui.radio(
-                {
-                    'mysekai_material': 'MySekai Material',
-                    'mysekai_item': 'MySekai Item',
-                    'material': 'Material',
-                    'mysekai_fixture': 'MySekai Fixture',
-                },
-                value='mysekai_material',
-                on_change=self.on_res_type_change).props('inline')
+            # Resource Type Selection Section
+            with ui.column().classes('w-full gap-3'):
+                ui.label('素材類型').classes('text-lg font-semibold')
+                self.radio_res_type = ui.radio(
+                    {
+                        'mysekai_material': 'MySekai Material',
+                        'mysekai_item': 'MySekai Item',
+                        'material': 'Material',
+                        'mysekai_fixture': 'MySekai Fixture',
+                    },
+                    value='mysekai_material',
+                    on_change=self.on_res_type_change).props('inline')
 
-            self.checkbox_filter_current = ui.checkbox(
-                'Filter Current', on_change=self.on_res_type_change)
+            # Filter and Selection Section
+            with ui.column().classes('w-full gap-4'):
+                ui.label('篩選與選擇').classes('text-lg font-semibold')
 
-            with ui.row().classes('items-center'):
-                ui.label('選擇素材')
-                resources = SekaiResources.instance()
-                self.select_res = ui.select(
-                    resources.get_all_mysekai_material(),
-                    value=12,
-                    on_change=self.show_resources.refresh,
-                )
+                with ui.row().classes('items-center gap-4'):
+                    self.checkbox_filter_current = ui.checkbox(
+                        '僅顯示現在可得的素材',
+                        on_change=self.on_res_type_change
+                    ).classes('flex-wrap')
+
+                with ui.row().classes('items-center gap-4'):
+                    ui.label('選擇素材').classes('font-medium')
+                    resources = SekaiResources.instance()
+                    self.select_res = ui.select(
+                        resources.get_all_mysekai_material(),
+                        value=12,
+                        on_change=self.show_resources.refresh,
+                    ).classes('flex-grow')
 
             self.show_resources()
 
