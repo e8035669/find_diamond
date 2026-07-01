@@ -1,4 +1,4 @@
-FROM ghcr.io/prefix-dev/pixi:0.49.0 AS build
+FROM ghcr.io/prefix-dev/pixi:0.68.0 AS build
 
 WORKDIR /app
 COPY pixi.toml pixi.toml
